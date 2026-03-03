@@ -11,7 +11,8 @@ Local development:
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, FileResponse
 
 from api.routers import datasets, trees
 
@@ -38,8 +39,6 @@ app = FastAPI(
 )
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
-# On Vercel the frontend and API are on the same origin, but allow all origins
-# so local development (opening tree.html from the filesystem) also works.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -51,6 +50,12 @@ app.add_middleware(
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(datasets.router, prefix="/api/datasets", tags=["QuantumTree — Datasets"])
 app.include_router(trees.router,    prefix="/api/trees",    tags=["QuantumTree — Trees"])
+
+# ── Static Files (for local all-in-one running) ───────────────────────────────
+# This allows you to run 'fastapi dev api/index.py' and see the UI at http://localhost:8000/
+@app.get("/", include_in_schema=False)
+async def serve_frontend():
+    return FileResponse("tree.html")
 
 
 # ── Health check ─────────────────────────────────────────────────────────────
@@ -86,6 +91,12 @@ async def root():
         "datasets": "/api/datasets",
         "trees":    "/api/trees",
     })
+
+
+# Mount the root directory to serve CSS, JS, and images from the root path.
+# This MUST be the last mount/route so it doesn't interfere with /api/ routes.
+app.mount("/", StaticFiles(directory="."), name="static")
+
 
 
 # ── Global exception handler ─────────────────────────────────────────────────

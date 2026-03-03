@@ -18,7 +18,7 @@ router = APIRouter(tags=["QuantumTree — Trees"])
 
 # ── POST /api/trees ───────────────────────────────────────────────────────────
 @router.post(
-    "/trees",
+    "",
     response_model=TreeSessionResponse,
     status_code=201,
     name="quantumtree:trees:save",

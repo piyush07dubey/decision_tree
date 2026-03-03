@@ -829,8 +829,8 @@ const SESSION_ID = (() => {
 })();
 
 // Detect whether we're running on Vercel/server or locally from filesystem.
-// When opened from filesystem (file://), the API won't be reachable — degrade gracefully.
-const API_BASE = window.location.protocol === "file:" ? null : "";
+// If opened from filesystem (file://), try to connect to a local backend on port 8000.
+const API_BASE = window.location.protocol === "file:" ? "http://localhost:8000" : "";
 
 // ── Generic fetch helper ──────────────────────────────────────
 async function apiFetch(path, options = {}) {

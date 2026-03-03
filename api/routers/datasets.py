@@ -52,7 +52,7 @@ async def create_dataset(body: DatasetCreate):
 
 # ── GET /api/datasets ─────────────────────────────────────────────────────────
 @router.get(
-    "/datasets",
+    "",
     response_model=list[DatasetListItem],
     name="quantumtree:datasets:list",
     summary="List all datasets for this browser session",
