@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QuantumTree | Professional ML Decision Visualizer</title>
+    <meta name="description" content="Professional interactive D3.js Decision Tree Visualizer with GSAP animations, numerical feature support, and animated splitting.">
+    <link rel="stylesheet" href="tree.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <!-- D3.js v7 -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <!-- GSAP + plugins -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollTrigger.min.js"></script>
+</head>
+<body>
+
+    <!-- Ambient Background -->
+    <canvas id="bgCanvas"></canvas>
+    <div class="bg-orbs">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+    </div>
+
+    <!-- App Shell -->
+    <div class="app-shell">
+
+        <!-- ── Sidebar ── -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-brand">
+                <div class="brand-icon">Q</div>
+                <div>
+                    <h1 class="brand-name">Quantum<span>Tree</span></h1>
+                    <p class="brand-sub">ML Visualizer v2.0</p>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-label">Dataset</div>
+                <label for="csvFile" class="file-drop-zone" id="fileDrop">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/></svg>
+                    <span id="fileLabel">Upload CSV</span>
+                </label>
+                <input type="file" id="csvFile" accept=".csv">
+
+                <div class="dataset-chips" id="datasetChips">
+                    <button class="chip active" onclick="loadDataset('tennis')">🎾 Tennis</button>
+                    <button class="chip" onclick="loadDataset('iris')">🌸 Iris</button>
+                    <button class="chip" onclick="loadDataset('titanic')">🚢 Titanic</button>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-label">Model Parameters</div>
+
+                <div class="param-row">
+                    <label>Criterion</label>
+                    <div class="radio-pills">
+                        <button class="pill active" id="pill-entropy" onclick="setCriterion('entropy')">Entropy</button>
+                        <button class="pill" id="pill-gini" onclick="setCriterion('gini')">Gini</button>
+                    </div>
+                </div>
+
+                <div class="param-row">
+                    <label>Max Depth: <span id="depthLabel">5</span></label>
+                    <input type="range" id="maxDepth" min="1" max="10" value="5" oninput="document.getElementById('depthLabel').textContent=this.value">
+                </div>
+
+                <div class="param-row">
+                    <label>Min Samples Split: <span id="minSampLabel">2</span></label>
+                    <input type="range" id="minSamples" min="2" max="20" value="2" oninput="document.getElementById('minSampLabel').textContent=this.value">
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-label">Visualization</div>
+
+                <div class="param-row">
+                    <label>Animate Split</label>
+                    <label class="toggle">
+                        <input type="checkbox" id="animateToggle" checked>
+                        <span class="slider-toggle"></span>
+                    </label>
+                </div>
+
+                <div class="param-row">
+                    <label>Speed: <span id="speedLabel">Medium</span></label>
+                    <input type="range" id="animSpeed" min="1" max="3" value="2" oninput="setSpeed(this.value)">
+                </div>
+
+                <button class="btn btn-primary full-width" onclick="runBuild()" id="buildBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/></svg>
+                    Build Tree
+                </button>
+                <button class="btn btn-secondary full-width" onclick="replayAnimation()" id="replayBtn" style="display:none">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                    Replay Animation
+                </button>
+            </div>
+
+            <!-- Stats Panel -->
+            <div class="stats-panel" id="statsPanel" style="display:none">
+                <div class="section-label">Model Stats</div>
+                <div class="stat-grid">
+                    <div class="stat-card">
+                        <div class="stat-val" id="statNodes">–</div>
+                        <div class="stat-key">Nodes</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-val" id="statLeaves">–</div>
+                        <div class="stat-key">Leaves</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-val" id="statDepth">–</div>
+                        <div class="stat-key">Depth</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-val" id="statSamples">–</div>
+                        <div class="stat-key">Samples</div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- ── Main Canvas ── -->
+        <main class="canvas-area">
+            <!-- Toolbar -->
+            <div class="canvas-toolbar">
+                <div class="toolbar-left">
+                    <span id="treeTitle" class="tree-title">No tree built yet</span>
+                </div>
+                <div class="toolbar-right">
+                    <button class="icon-btn" onclick="zoomIn()" title="Zoom In">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                    </button>
+                    <button class="icon-btn" onclick="zoomOut()" title="Zoom Out">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                    </button>
+                    <button class="icon-btn" onclick="resetZoom()" title="Reset View">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25"/></svg>
+                    </button>
+                    <button class="icon-btn" onclick="exportSVG()" title="Export SVG">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Empty state -->
+            <div class="empty-state" id="emptyState">
+                <div class="empty-icon">🌳</div>
+                <h2>No Tree Yet</h2>
+                <p>Load a dataset and click <strong>Build Tree</strong> to synthesize your decision model.</p>
+            </div>
+
+            <!-- D3 SVG container -->
+            <svg id="treeSvg" style="display:none">
+                <defs>
+                    <filter id="glow">
+                        <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                        <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                    </filter>
+                    <marker id="arrowhead" markerWidth="6" markerHeight="4" refX="6" refY="2" orient="auto">
+                        <polygon points="0 0, 6 2, 0 4" fill="rgba(0,242,254,0.5)"/>
+                    </marker>
+                </defs>
+                <g id="treeG"></g>
+            </svg>
+
+            <!-- Progress bar while animating -->
+            <div class="anim-progress" id="animProgress" style="display:none">
+                <div class="progress-label" id="progressLabel">Building tree…</div>
+                <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressFill"></div></div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Tooltip -->
+    <div class="node-tooltip" id="nodeTooltip"></div>
+
+    <!-- Node Detail Modal -->
+    <div class="modal-overlay" id="modalOverlay" onclick="closeModal()">
+        <div class="modal-card" onclick="event.stopPropagation()">
+            <button class="modal-close" onclick="closeModal()">✕</button>
+            <div id="modalContent"></div>
+        </div>
+    </div>
+
+    <script src="tree.js"></script>
+</body>
+</html>
