@@ -802,8 +802,212 @@ window.addEventListener("DOMContentLoaded", () => {
 
     // Auto-load the tennis dataset
     loadDataset("tennis");
+    // Load saved-tree history from backend
+    loadHistory();
 });
 
 window.addEventListener("resize", () => {
     if (builtTree) renderD3Tree(builtTree, false);
 });
+
+
+// ══════════════════════════════════════════════════════════════
+//  SECTION 6 – BACKEND API LAYER
+//  All fetch calls to the FastAPI backend on /api/*
+// ══════════════════════════════════════════════════════════════
+
+// ── Session identity ─────────────────────────────────────────
+// Each browser gets a UUID stored in localStorage.
+// This acts as an anonymous session — no login required.
+const SESSION_ID = (() => {
+    let id = localStorage.getItem("qt_session_id");
+    if (!id) {
+        id = crypto.randomUUID();
+        localStorage.setItem("qt_session_id", id);
+    }
+    return id;
+})();
+
+// Detect whether we're running on Vercel/server or locally from filesystem.
+// When opened from filesystem (file://), the API won't be reachable — degrade gracefully.
+const API_BASE = window.location.protocol === "file:" ? null : "";
+
+// ── Generic fetch helper ──────────────────────────────────────
+async function apiFetch(path, options = {}) {
+    if (!API_BASE && API_BASE !== "") {
+        throw new Error("API not available when opening file:// locally. Deploy to Vercel first.");
+    }
+    const res = await fetch(`${API_BASE}${path}`, {
+        headers: { "Content-Type": "application/json", ...options.headers },
+        ...options,
+    });
+    if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try { const j = await res.json(); msg = j.detail || msg; } catch(_) {}
+        throw new Error(msg);
+    }
+    return res.status === 204 ? null : res.json();
+}
+
+// ── Toast notification ────────────────────────────────────────
+let toastTimer = null;
+function showToast(message, type = "success") {
+    const t = document.getElementById("toast");
+    const icon = type === "success" ? "✅" : "❌";
+    t.innerHTML = `<span>${icon}</span><span>${message}</span>`;
+    t.className = `toast show ${type}`;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { t.className = "toast"; }, 3500);
+}
+
+// ── Save current dataset to cloud ────────────────────────────
+let savedDatasetId = null;  // tracks if current dataset is already saved
+let savedDatasetName = "";
+
+async function saveDatasetToCloud() {
+    if (!rawDataset.length) return showToast("No dataset loaded to save.", "error");
+    const btn = document.getElementById("saveDataBtn");
+    btn.classList.add("saving"); btn.textContent = "Saving…";
+
+    const name = document.getElementById("treeTitle").textContent.split("(")[0].trim() || "Untitled Dataset";
+    try {
+        const result = await apiFetch("/api/datasets", {
+            method: "POST",
+            body: JSON.stringify({
+                session_id:    SESSION_ID,
+                name:          name,
+                headers:       [...featureNames, labelName],
+                rows:          rawDataset.map(r => [...featureNames, labelName].map(h => r[h])),
+                feature_types: featureTypes,
+            }),
+        });
+        savedDatasetId   = result.id;
+        savedDatasetName = result.name;
+        showToast(`Dataset "${name}" saved!`);
+    } catch(e) {
+        showToast(e.message, "error");
+    } finally {
+        btn.classList.remove("saving");
+        btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Save Dataset`;
+    }
+}
+
+// ── Save built tree to cloud ──────────────────────────────────
+async function saveCurrentTree() {
+    if (!builtTree) return showToast("Build a tree first before saving.", "error");
+    const btn = document.getElementById("saveBtn");
+    btn.classList.add("saving"); btn.textContent = "Saving…";
+
+    const stats  = treeStats(builtTree);
+    const name   = document.getElementById("treeTitle").textContent.split("(")[0].trim() || "Untitled";
+    const maxD   = +document.getElementById("maxDepth").value;
+    const minS   = +document.getElementById("minSamples").value;
+
+    try {
+        await apiFetch("/api/trees", {
+            method: "POST",
+            body: JSON.stringify({
+                session_id:   SESSION_ID,
+                dataset_id:   savedDatasetId || null,
+                dataset_name: savedDatasetName || name,
+                criterion,
+                max_depth:    maxD,
+                min_samples:  minS,
+                tree_json:    builtTree,  // full JS tree object
+                stats:        { nodes: stats.nodes, leaves: stats.leaves, maxDepth: stats.maxDepth },
+            }),
+        });
+        showToast("Tree saved to your history!");
+        loadHistory();  // refresh sidebar
+    } catch(e) {
+        showToast(e.message, "error");
+    } finally {
+        btn.classList.remove("saving");
+        btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save Tree`;
+    }
+}
+
+// ── Load history from cloud ───────────────────────────────────
+async function loadHistory() {
+    // If running locally from filesystem, silently skip — no API available.
+    if (window.location.protocol === "file:") return;
+
+    const list = document.getElementById("historyList");
+    try {
+        const items = await apiFetch(`/api/trees?session_id=${SESSION_ID}&limit=20`);
+        if (!items || items.length === 0) {
+            list.innerHTML = `<div class="history-empty">No saved trees yet.<br>Build &amp; save a tree to see it here.</div>`;
+            return;
+        }
+        list.innerHTML = items.map(item => {
+            const date = new Date(item.created_at).toLocaleString(undefined, { month:"short", day:"2-digit", hour:"2-digit", minute:"2-digit" });
+            return `
+            <div class="history-card" onclick="loadSavedTree('${item.id}')">
+                <button class="history-card-del" title="Delete" onclick="event.stopPropagation();deleteTree('${item.id}')">✕</button>
+                <div class="history-card-title">${item.dataset_name}</div>
+                <div class="history-card-meta">
+                    <span class="history-card-badge">${item.criterion}</span>
+                    <span class="history-card-badge">depth ${item.max_depth}</span>
+                    <span class="history-card-badge">${item.stats?.nodes ?? "?"} nodes</span>
+                </div>
+                <div class="history-card-time">${date}</div>
+            </div>`;
+        }).join("");
+        gsap.from(".history-card", { opacity:0, x:-10, stagger:0.06, duration:0.3, ease:"power2.out" });
+    } catch(e) {
+        list.innerHTML = `<div class="history-empty">Could not load history.<br><small>${e.message}</small></div>`;
+    }
+}
+
+// ── Load a specific saved tree from cloud ─────────────────────
+async function loadSavedTree(id) {
+    try {
+        showToast("Loading tree from cloud…");
+        const session = await apiFetch(`/api/trees/${id}?session_id=${SESSION_ID}`);
+
+        // Restore global state from the saved session
+        criterion    = session.criterion;
+        builtTree    = session.tree_json;
+        document.getElementById("pill-entropy").classList.toggle("active", criterion === "entropy");
+        document.getElementById("pill-gini").classList.toggle("active", criterion === "gini");
+        document.getElementById("maxDepth").value = session.max_depth;
+        document.getElementById("depthLabel").textContent = session.max_depth;
+        document.getElementById("minSamples").value = session.min_samples;
+        document.getElementById("minSampLabel").textContent = session.min_samples;
+        document.getElementById("treeTitle").textContent = `${session.dataset_name} (loaded from cloud)`;
+
+        // Re-render the tree (no animation — instant)
+        renderD3Tree(builtTree, false);
+        const stats = treeStats(builtTree);
+        showStats(stats, session.stats?.nodes ?? 0);
+        document.getElementById("saveSection").style.display = "flex";
+        showToast(`"${session.dataset_name}" restored from history!`);
+    } catch(e) {
+        showToast("Failed to load tree: " + e.message, "error");
+    }
+}
+
+// ── Delete a saved tree ───────────────────────────────────────
+async function deleteTree(id) {
+    try {
+        await apiFetch(`/api/trees/${id}?session_id=${SESSION_ID}`, { method: "DELETE" });
+        showToast("Tree deleted.");
+        loadHistory();
+    } catch(e) {
+        showToast("Delete failed: " + e.message, "error");
+    }
+}
+
+// ── Expose the Cloud Sync panel after first build ─────────────
+// Called from showStats() inside tree.js — reveal save buttons
+const _origShowStats = showStats;
+function showStatsAndReveal(stats, nSamples) {
+    _origShowStats(stats, nSamples);
+    document.getElementById("saveSection").style.display = "flex";
+}
+// Override the reference used in renderD3Tree
+// (showStats is called there directly; we patch it here safely)
+window.showStats = function(stats, nSamples) {
+    _origShowStats(stats, nSamples);
+    document.getElementById("saveSection").style.display = "flex";
+};

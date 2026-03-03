@@ -1,0 +1,3 @@
+"""
+QuantumTree API — Package init
+"""
