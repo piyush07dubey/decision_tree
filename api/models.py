@@ -7,9 +7,15 @@ Keeps routers clean and gives automatic OpenAPI docs.
 
 from __future__ import annotations
 from datetime import datetime
-from typing import Any
+from typing import Any, Union
 from uuid import UUID
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+# Custom validator to handle both UUID strings and ObjectId
+class ObjectIdStr(str):
+    """String type that can accept MongoDB ObjectId or UUID strings."""
+    pass
 
 
 # ─── Dataset models ───────────────────────────────────────────────────────────
@@ -38,19 +44,19 @@ class DatasetCreate(BaseModel):
 
 
 class DatasetResponse(BaseModel):
-    id:            UUID
-    session_id:    str
-    name:          str
-    headers:       list[str]
-    rows:          list[list[Any]]
+    id:           Union[UUID, str]  # Can be UUID or ObjectId string
+    session_id:   str
+    name:         str
+    headers:      list[str]
+    rows:         list[list[Any]]
     feature_types: dict[str, str]
-    row_count:     int
-    created_at:    datetime
+    row_count:    int
+    created_at:   datetime
 
 
 class DatasetListItem(BaseModel):
     """Lightweight summary for list views — does NOT include the full rows array."""
-    id:         UUID
+    id:         Union[UUID, str]  # Can be UUID or ObjectId string
     name:       str
     row_count:  int
     created_at: datetime
@@ -64,14 +70,14 @@ class TreeSessionCreate(BaseModel):
     `tree_json` is the full serialised tree root (the JS object) as a dict.
     `stats` is {nodes, leaves, maxDepth}.
     """
-    session_id:   str         = Field(..., min_length=1, max_length=128)
-    dataset_id:   UUID | None = Field(None, description="UUID of the saved dataset, if any")
-    dataset_name: str         = Field(..., min_length=1, max_length=255)
-    criterion:    str         = Field(..., pattern="^(entropy|gini)$")
-    max_depth:    int         = Field(..., ge=1, le=20)
-    min_samples:  int         = Field(..., ge=2)
-    tree_json:    dict        = Field(...)
-    stats:        dict        = Field(...)
+    session_id:   str                    = Field(..., min_length=1, max_length=128)
+    dataset_id:   Union[UUID, str, None] = Field(None, description="UUID of the saved dataset, if any")
+    dataset_name: str                    = Field(..., min_length=1, max_length=255)
+    criterion:    str                    = Field(..., pattern="^(entropy|gini)$")
+    max_depth:    int                    = Field(..., ge=1, le=20)
+    min_samples:  int                    = Field(..., ge=2)
+    tree_json:    dict                   = Field(...)
+    stats:        dict                   = Field(...)
 
     @field_validator("stats")
     @classmethod
@@ -83,9 +89,9 @@ class TreeSessionCreate(BaseModel):
 
 
 class TreeSessionResponse(BaseModel):
-    id:           UUID
+    id:           Union[UUID, str]  # Can be UUID or ObjectId string
     session_id:   str
-    dataset_id:   UUID | None
+    dataset_id:   Union[UUID, str, None]
     dataset_name: str
     criterion:    str
     max_depth:    int
@@ -97,7 +103,7 @@ class TreeSessionResponse(BaseModel):
 
 class TreeSessionListItem(BaseModel):
     """Card data for the history sidebar — no full tree_json."""
-    id:           UUID
+    id:           Union[UUID, str]  # Can be UUID or ObjectId string
     dataset_name: str
     criterion:    str
     max_depth:    int

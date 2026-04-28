@@ -10,7 +10,7 @@ Endpoints:
 
 from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
-from api.database import get_client
+from api.database import get_db
 from api.models import DatasetCreate, DatasetResponse, DatasetListItem
 
 router = APIRouter(tags=["QuantumTree — Datasets"])
@@ -28,26 +28,32 @@ router = APIRouter(tags=["QuantumTree — Datasets"])
 )
 async def create_dataset(body: DatasetCreate):
     """
-    Save a CSV dataset to Supabase.
+    Save a CSV dataset to MongoDB.
     Called by the browser after the user uploads a file or loads sample data.
     """
-    db = get_client()
+    db = get_db()
 
-    payload = {
+    from bson import uuid
+
+    document = {
         "session_id":    body.session_id,
         "name":          body.name,
         "headers":       body.headers,
         "rows":          body.rows,
         "feature_types": body.feature_types,
         "row_count":     len(body.rows),
+        "created_at":    None,  # Will be set by MongoDB
     }
 
-    result = db.table("datasets").insert(payload).execute()
+    result = db.datasets.insert_one(document)
 
-    if not result.data:
-        raise HTTPException(status_code=500, detail="Failed to insert dataset into Supabase")
+    if not result.inserted_id:
+        raise HTTPException(status_code=500, detail="Failed to insert dataset into MongoDB")
 
-    return _map_dataset(result.data[0])
+    # Fetch the inserted document to get the created_at timestamp
+    inserted_doc = db.datasets.find_one({"_id": result.inserted_id})
+
+    return _map_dataset(inserted_doc)
 
 
 # ── GET /api/datasets ─────────────────────────────────────────────────────────
@@ -57,7 +63,7 @@ async def create_dataset(body: DatasetCreate):
     name="quantumtree:datasets:list",
     summary="List all datasets for this browser session",
     operation_id="quantumtree_list_datasets",
-    response_description="Newest-first list of dataset summaries (no full row data)",
+    response_description="Newest-first list of dataset summaries (no full rows array)",
 )
 async def list_datasets(
     session_id: str = Query(..., min_length=1, max_length=128)
@@ -66,18 +72,25 @@ async def list_datasets(
     Return a lightweight list of all datasets for a given session.
     Ordered newest-first. Does NOT return the full rows array.
     """
-    db = get_client()
+    db = get_db()
 
-    result = (
-        db.table("datasets")
-        .select("id, name, row_count, created_at")
-        .eq("session_id", session_id)
-        .order("created_at", desc=True)
+    cursor = (
+        db.datasets
+        .find({"session_id": session_id})
+        .sort("created_at", -1)  # Descending order (newest first)
         .limit(50)
-        .execute()
     )
 
-    return result.data or []
+    results = []
+    for doc in cursor:
+        results.append({
+            "id": doc["_id"],
+            "name": doc["name"],
+            "row_count": doc["row_count"],
+            "created_at": doc["created_at"],
+        })
+
+    return results
 
 
 # ── GET /api/datasets/{id} ────────────────────────────────────────────────────
@@ -97,21 +110,17 @@ async def get_dataset(
     Fetch a single dataset by ID.
     Requires matching session_id to prevent cross-session access.
     """
-    db = get_client()
+    db = get_db()
 
-    result = (
-        db.table("datasets")
-        .select("*")
-        .eq("id", str(dataset_id))
-        .eq("session_id", session_id)
-        .single()
-        .execute()
-    )
+    doc = db.datasets.find_one({
+        "_id": dataset_id,
+        "session_id": session_id
+    })
 
-    if not result.data:
+    if not doc:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    return _map_dataset(result.data)
+    return _map_dataset(doc)
 
 
 # ── DELETE /api/datasets/{id} ─────────────────────────────────────────────────
@@ -128,30 +137,30 @@ async def delete_dataset(
     session_id: str = Query(..., min_length=1, max_length=128)
 ):
     """Delete a dataset. Also cascades to any tree sessions referencing it."""
-    db = get_client()
+    db = get_db()
 
-    result = (
-        db.table("datasets")
-        .delete()
-        .eq("id", str(dataset_id))
-        .eq("session_id", session_id)
-        .execute()
-    )
+    result = db.datasets.delete_one({
+        "_id": dataset_id,
+        "session_id": session_id
+    })
 
-    if not result.data:
+    if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Dataset not found or access denied")
+
+    # Cascade delete: remove tree sessions that reference this dataset
+    db.tree_sessions.delete_many({"dataset_id": dataset_id})
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-def _map_dataset(row: dict) -> dict:
-    """Normalise Supabase row → response dict (handles UUID strings)."""
+def _map_dataset(doc: dict) -> dict:
+    """Normalise MongoDB document → response dict (handles ObjectId to UUID)."""
     return {
-        "id":            row["id"],
-        "session_id":    row["session_id"],
-        "name":          row["name"],
-        "headers":       row["headers"],
-        "rows":          row.get("rows", []),
-        "feature_types": row["feature_types"],
-        "row_count":     row["row_count"],
-        "created_at":    row["created_at"],
+        "id":            doc["_id"],
+        "session_id":    doc["session_id"],
+        "name":          doc["name"],
+        "headers":       doc["headers"],
+        "rows":          doc.get("rows", []),
+        "feature_types": doc["feature_types"],
+        "row_count":     doc["row_count"],
+        "created_at":    doc["created_at"],
     }

@@ -22,7 +22,7 @@ app = FastAPI(
     description=(
         "## QuantumTree — ML Decision Tree Visualizer\n\n"
         "Production REST API for storing and retrieving **CART decision tree** sessions "
-        "and training datasets. Powered by **FastAPI** + **Supabase** (Postgres). "
+        "and training datasets. Powered by **FastAPI** + **MongoDB**. "
         "Deployed as a serverless function on **Vercel**.\n\n"
         "### Key features\n"
         "- Save / load serialised D3-ready tree JSON\n"
@@ -30,7 +30,7 @@ app = FastAPI(
         "- Anonymous session isolation via browser `session_id`\n"
         "- Numerical & categorical feature support (CART midpoint splits)\n"
     ),
-    version="2.0.0",
+    version="2.1.0",
     contact={"name": "QuantumTree", "url": "https://github.com/piyush07dubey/decision_tree"},
     license_info={"name": "MIT"},
     docs_url="/api/docs",
@@ -69,7 +69,7 @@ async def serve_frontend():
 )
 async def health():
     """Returns 200 with `{status: ok}` if the API serverless function is running."""
-    return {"status": "ok", "version": "2.0.0"}
+    return {"status": "ok", "version": "2.1.0"}
 
 
 # ── Root catch-all (Vercel static handles /; this just returns a hint) ────────

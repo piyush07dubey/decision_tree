@@ -18,3 +18,4 @@ env/
 
 # VS Code
 .vscode/
+.vercel.json

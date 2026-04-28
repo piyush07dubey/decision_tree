@@ -10,7 +10,7 @@ Endpoints:
 
 from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
-from api.database import get_client
+from api.database import get_db
 from api.models import TreeSessionCreate, TreeSessionResponse, TreeSessionListItem
 
 router = APIRouter(tags=["QuantumTree — Trees"])
@@ -28,29 +28,33 @@ router = APIRouter(tags=["QuantumTree — Trees"])
 )
 async def save_tree(body: TreeSessionCreate):
     """
-    Persist a built decision tree to Supabase.
+    Persist a built decision tree to MongoDB.
     Called by the browser after buildTree() completes.
     The full serialised tree_json (the JS root node as a dict) is stored.
     """
-    db = get_client()
+    db = get_db()
 
-    payload = {
+    document = {
         "session_id":   body.session_id,
-        "dataset_id":   str(body.dataset_id) if body.dataset_id else None,
+        "dataset_id":   body.dataset_id if body.dataset_id else None,
         "dataset_name": body.dataset_name,
         "criterion":    body.criterion,
         "max_depth":    body.max_depth,
         "min_samples":  body.min_samples,
         "tree_json":    body.tree_json,
         "stats":        body.stats,
+        "created_at":   None,  # Will be set by MongoDB
     }
 
-    result = db.table("tree_sessions").insert(payload).execute()
+    result = db.tree_sessions.insert_one(document)
 
-    if not result.data:
+    if not result.inserted_id:
         raise HTTPException(status_code=500, detail="Failed to save tree session")
 
-    return _map_session(result.data[0])
+    # Fetch the inserted document to get the created_at timestamp
+    inserted_doc = db.tree_sessions.find_one({"_id": result.inserted_id})
+
+    return _map_session(inserted_doc)
 
 
 # ── GET /api/trees ────────────────────────────────────────────────────────────
@@ -70,18 +74,28 @@ async def list_trees(
     Return card-level history of tree sessions for a given browser session.
     Does NOT include tree_json in the list (too large); only stats + metadata.
     """
-    db = get_client()
+    db = get_db()
 
-    result = (
-        db.table("tree_sessions")
-        .select("id, dataset_name, criterion, max_depth, min_samples, stats, created_at")
-        .eq("session_id", session_id)
-        .order("created_at", desc=True)
+    cursor = (
+        db.tree_sessions
+        .find({"session_id": session_id})
+        .sort("created_at", -1)  # Descending order (newest first)
         .limit(limit)
-        .execute()
     )
 
-    return result.data or []
+    results = []
+    for doc in cursor:
+        results.append({
+            "id": doc["_id"],
+            "dataset_name": doc["dataset_name"],
+            "criterion": doc["criterion"],
+            "max_depth": doc["max_depth"],
+            "min_samples": doc["min_samples"],
+            "stats": doc["stats"],
+            "created_at": doc["created_at"],
+        })
+
+    return results
 
 
 # ── GET /api/trees/{id} ───────────────────────────────────────────────────────
@@ -101,21 +115,17 @@ async def get_tree(
     Fetch a full tree session (including tree_json) so the browser can
     re-render a previously built tree without re-running the algorithm.
     """
-    db = get_client()
+    db = get_db()
 
-    result = (
-        db.table("tree_sessions")
-        .select("*")
-        .eq("id", str(tree_id))
-        .eq("session_id", session_id)
-        .single()
-        .execute()
-    )
+    doc = db.tree_sessions.find_one({
+        "_id": tree_id,
+        "session_id": session_id
+    })
 
-    if not result.data:
+    if not doc:
         raise HTTPException(status_code=404, detail="Tree session not found")
 
-    return _map_session(result.data)
+    return _map_session(doc)
 
 
 # ── DELETE /api/trees/{id} ────────────────────────────────────────────────────
@@ -132,31 +142,29 @@ async def delete_tree(
     session_id: str = Query(..., min_length=1, max_length=128),
 ):
     """Remove a saved tree session."""
-    db = get_client()
+    db = get_db()
 
-    result = (
-        db.table("tree_sessions")
-        .delete()
-        .eq("id", str(tree_id))
-        .eq("session_id", session_id)
-        .execute()
-    )
+    result = db.tree_sessions.delete_one({
+        "_id": tree_id,
+        "session_id": session_id
+    })
 
-    if not result.data:
+    if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Tree session not found or access denied")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-def _map_session(row: dict) -> dict:
+def _map_session(doc: dict) -> dict:
+    """Normalise MongoDB document → response dict."""
     return {
-        "id":           row["id"],
-        "session_id":   row.get("session_id", ""),
-        "dataset_id":   row.get("dataset_id"),
-        "dataset_name": row["dataset_name"],
-        "criterion":    row["criterion"],
-        "max_depth":    row["max_depth"],
-        "min_samples":  row["min_samples"],
-        "tree_json":    row.get("tree_json", {}),
-        "stats":        row["stats"],
-        "created_at":   row["created_at"],
+        "id":           doc["_id"],
+        "session_id":   doc.get("session_id", ""),
+        "dataset_id":   doc.get("dataset_id"),
+        "dataset_name": doc["dataset_name"],
+        "criterion":    doc["criterion"],
+        "max_depth":    doc["max_depth"],
+        "min_samples":  doc["min_samples"],
+        "tree_json":    doc.get("tree_json", {}),
+        "stats":        doc["stats"],
+        "created_at":   doc["created_at"],
     }
